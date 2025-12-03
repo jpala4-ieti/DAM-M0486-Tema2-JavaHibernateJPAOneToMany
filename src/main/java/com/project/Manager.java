@@ -9,300 +9,255 @@ import java.util.List;
 import java.util.Properties;
 import java.util.Set;
 
-import org.hibernate.HibernateException;
 import org.hibernate.Session; 
 import org.hibernate.Transaction;
 import org.hibernate.boot.registry.StandardServiceRegistry;
 import org.hibernate.boot.registry.StandardServiceRegistryBuilder;
 import org.hibernate.SessionFactory;
 import org.hibernate.cfg.Configuration;
-import org.hibernate.query.NativeQuery;
 
+/**
+ * Classe MANAGER: Patró DAO (Data Access Object)
+ * Centralitza totes les operacions amb la base de dades.
+ * Gestiona el cicle de vida de les sessions Hibernate.
+ */
 public class Manager {
 
-    private static SessionFactory factory; 
-    
-    public static void createSessionFactory() {
-        try {
-            Configuration configuration = new Configuration();
-            
-            // Important: Afegim les classes anotades
-            configuration.addAnnotatedClass(Cart.class);
-            configuration.addAnnotatedClass(Item.class);
+    // SESSIONFACTORY: Objecte pesat que es crea UNA SOLA VEGADA.
+    // Gestiona la connexió amb la BBDD i la creació de sessions.
+    private static SessionFactory factory;
 
-            StandardServiceRegistry serviceRegistry = new StandardServiceRegistryBuilder()
-                .applySettings(configuration.getProperties())
-                .build();
-                
-            factory = configuration.buildSessionFactory(serviceRegistry);
-        } catch (Throwable ex) { 
-            System.err.println("Failed to create sessionFactory object." + ex);
-            throw new ExceptionInInitializerError(ex); 
-        }
+    // ═══════════════════════════════════════════════════════════════════
+    // INICIALITZACIÓ DE HIBERNATE
+    // ═══════════════════════════════════════════════════════════════════
+
+    public static void createSessionFactory() {
+        createSessionFactory("hibernate.properties");
     }
 
     public static void createSessionFactory(String propertiesFileName) {
         try {
+            // CONFIGURATION: Configura Hibernate programàticament
             Configuration configuration = new Configuration();
             
-            // Important: Afegim les classes anotades
+            // Registrem les classes @Entity que Hibernate ha de gestionar
             configuration.addAnnotatedClass(Cart.class);
             configuration.addAnnotatedClass(Item.class);
 
-            // Carreguem el fitxer de propietats
+            // Carreguem les propietats des del fitxer (URL BBDD, usuari, contrasenya...)
             Properties properties = new Properties();
             try (InputStream input = Manager.class.getClassLoader().getResourceAsStream(propertiesFileName)) {
                 if (input == null) {
-                    throw new IOException("No s'ha pogut trobar " + propertiesFileName + " al classpath.");
+                    throw new IOException("No s'ha pogut trobar " + propertiesFileName);
                 }
                 properties.load(input);
             }
-
-            // Apliquem les propietats a la configuració
             configuration.addProperties(properties);
-
+            
+            // SERVICE REGISTRY: Gestiona els serveis interns d'Hibernate
             StandardServiceRegistry serviceRegistry = new StandardServiceRegistryBuilder()
                 .applySettings(configuration.getProperties())
                 .build();
                 
+            // Construïm el SessionFactory (operació costosa, només es fa un cop)
             factory = configuration.buildSessionFactory(serviceRegistry);
+            
         } catch (Throwable ex) { 
-            System.err.println("Error en crear l'objecte sessionFactory: " + ex);
+            System.err.println("Error en crear sessionFactory: " + ex);
             throw new ExceptionInInitializerError(ex); 
         }
     }
 
-
-    public static void close () {
-        factory.close();
+    public static void close() {
+        if (factory != null) factory.close();
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // CRUD - CREATE (Creació d'entitats)
+    // ═══════════════════════════════════════════════════════════════════
   
-    public static Cart addCart(String type){
-        Session session = factory.openSession();
+    public static Cart addCart(String type) {
         Transaction tx = null;
-        Cart result = null;
-        try {
+        // TRY-WITH-RESOURCES: Tanca la Session automàticament al acabar
+        // (Session implementa AutoCloseable)
+        try (Session session = factory.openSession()) {
+            // TRANSACTION: Agrupa operacions. Si falla alguna, es pot fer rollback.
             tx = session.beginTransaction();
-            result = new Cart(type);
-            session.persist(result);
+            Cart cart = new Cart(type);
+            // PERSIST: Guarda l'objecte a la BBDD i li assigna un ID
+            session.persist(cart);
+            // COMMIT: Confirma els canvis a la BBDD
             tx.commit();
-        } catch (HibernateException e) {
-            if (tx!=null) tx.rollback();
+            return cart;
+        } catch (Exception e) {
+            // ROLLBACK: Desfà tots els canvis si hi ha error
+            if (tx != null && tx.isActive()) tx.rollback();
+            System.err.println("Error creant Cart: " + e.getMessage());
             e.printStackTrace(); 
-            result = null;
-        } finally {
-            session.close(); 
-        }
-        return result;
-    }
-
-    public static Item addItem(String name){
-        Session session = factory.openSession();
-        Transaction tx = null;
-        Item result = null;
-        try {
-            tx = session.beginTransaction();
-            result = new Item(name);
-            session.persist(result);
-            tx.commit();
-        } catch (HibernateException e) {
-            if (tx!=null) tx.rollback();
-            e.printStackTrace(); 
-            result = null;
-        } finally {
-            session.close(); 
-        }
-        return result;
-    }
-
-    public static void updateItem(long itemId, String name){
-        Session session = factory.openSession();
-        Transaction tx = null;
-        try {
-            tx = session.beginTransaction();
-            Item obj = (Item) session.get(Item.class, itemId); 
-            obj.setName(name);
-            session.merge(obj);
-            tx.commit();
-        } catch (HibernateException e) {
-            if (tx!=null) tx.rollback();
-            e.printStackTrace(); 
-        } finally {
-            session.close(); 
+            return null;
         }
     }
 
-    public static void updateCart(long cartId, String type, Set<Item> items) {
-        Session session = factory.openSession();
+    public static Item addItem(String name) {
         Transaction tx = null;
-        try {
+        try (Session session = factory.openSession()) {
             tx = session.beginTransaction();
-            
+            Item item = new Item(name);
+            session.persist(item);
+            tx.commit();
+            return item;
+        } catch (Exception e) {
+            if (tx != null && tx.isActive()) tx.rollback();
+            System.err.println("Error creant Item: " + e.getMessage());
+            return null;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // CRUD - UPDATE (Actualització d'entitats)
+    // ═══════════════════════════════════════════════════════════════════
+
+    public static void updateItem(Long itemId, String name) {
+        Transaction tx = null;
+        try (Session session = factory.openSession()) {
+            tx = session.beginTransaction();
+            // GET: Recupera l'entitat per ID. Retorna null si no existeix.
+            Item item = session.get(Item.class, itemId); 
+            if (item != null) {
+                item.setName(name);
+                // MERGE: Sincronitza l'estat de l'objecte amb la BBDD
+                session.merge(item);
+                tx.commit();
+                System.out.println("Item " + itemId + " actualitzat.");
+            }
+        } catch (Exception e) {
+            if (tx != null && tx.isActive()) tx.rollback();
+            e.printStackTrace(); 
+        }
+    }
+
+    public static void updateCart(Long cartId, String type, Set<Item> items) {
+        Transaction tx = null;
+        try (Session session = factory.openSession()) {
+            tx = session.beginTransaction();
             Cart cart = session.get(Cart.class, cartId);
+            
             if (cart == null) {
-                throw new RuntimeException("Cart not found with id: " + cartId);
+                System.err.println("Cart no trobat amb id: " + cartId);
+                return;
             }
             
             cart.setType(type);
             
-            if (cart.getItems() != null) {
-                for (Item oldItem : new HashSet<>(cart.getItems())) {
-                    cart.removeItem(oldItem);
-                }
-            }
-            
             if (items != null) {
-                for (Item item : items) {
-                    Item managedItem = session.get(Item.class, item.getItemId());
-                    if (managedItem != null) {
-                        cart.addItem(managedItem);
+                // PAS 1: Eliminar items que ja no estan a la nova llista
+                // Còpia per evitar ConcurrentModificationException mentre iterem i modifiquem
+                Set<Item> currentItems = new HashSet<>(cart.getItems());
+                for (Item dbItem : currentItems) {
+                    if (!items.contains(dbItem)) {
+                        cart.removeItem(dbItem);
                     }
                 }
+
+                // PAS 2: Afegir o actualitzar items de la nova llista
+                for (Item itemInput : items) {
+                    if (itemInput.getItemId() != null) {
+                        // FIND: Recupera l'entitat "managed" (gestionada per la sessió)
+                        // Evita errors de "detached entity" quan l'objecte ve de fora la sessió
+                        Item managedItem = session.find(Item.class, itemInput.getItemId());
+                        if (managedItem != null && !cart.getItems().contains(managedItem)) {
+                            cart.addItem(managedItem);
+                        }
+                    } else {
+                        // Item nou sense ID: s'afegeix i es persistirà per CASCADE
+                        cart.addItem(itemInput);
+                    }
+                }
+            } else {
+                // Si items és null, eliminem tots els items del cart
+                new HashSet<>(cart.getItems()).forEach(cart::removeItem);
             }
             
             session.merge(cart);
             tx.commit();
+            System.out.println("Cart " + cartId + " actualitzat.");
             
-        } catch (HibernateException e) {
-            if (tx != null) tx.rollback();
+        } catch (Exception e) {
+            if (tx != null && tx.isActive()) tx.rollback();
             e.printStackTrace();
-        } finally {
-            session.close();
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // CRUD - READ (Lectura d'entitats)
+    // ═══════════════════════════════════════════════════════════════════
         
-    public static Cart getCartWithItems(long cartId) {
-        Cart cart;
+    public static Cart getCartWithItems(Long cartId) {
         try (Session session = factory.openSession()) {
-            Transaction tx = session.beginTransaction();
-            cart = session.get(Cart.class, cartId);
-            // Eagerly fetch the items collection
-            cart.getItems().size();
-            tx.commit();
+            // JOIN FETCH: Soluciona el problema de LAZY LOADING.
+            // Carrega Cart + Items en UNA SOLA consulta SQL.
+            // Sense això, accedir a getItems() fora de la sessió llançaria
+            // LazyInitializationException.
+            String hql = "SELECT c FROM Cart c LEFT JOIN FETCH c.items WHERE c.cartId = :id";
+            return session.createQuery(hql, Cart.class)
+                          .setParameter("id", cartId)
+                          .uniqueResult();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
         }
-        return cart;
     }
 
-    public static <T> T getById(Class<? extends T> clazz, long id){
-        Session session = factory.openSession();
-        Transaction tx = null;
-        T obj = null;
-        try {
-            tx = session.beginTransaction();
-            obj = clazz.cast(session.get(clazz, id)); 
-            tx.commit();
-        } catch (HibernateException e) {
-            if (tx!=null) tx.rollback();
-            e.printStackTrace(); 
-        } finally {
-            session.close(); 
+    // MÈTODE GENÈRIC: Funciona amb qualsevol classe Entity gràcies a <T>
+    public static <T> List<T> findAll(Class<T> clazz) {
+        try (Session session = factory.openSession()) {
+            // HQL (Hibernate Query Language): Similar a SQL però usa noms de classes Java
+            return session.createQuery("FROM " + clazz.getName(), clazz).list();
         }
-        return obj;
     }
 
-    public static <T> void delete(Class<? extends T> clazz, Serializable id) {
-        Session session = factory.openSession();
+    public static List<Cart> findAllCartsWithItems() {
+        try (Session session = factory.openSession()) {
+            // DISTINCT: Evita duplicats del Cart pare quan té múltiples Items
+            // (el JOIN multiplica files: 1 Cart amb 3 Items = 3 files)
+            return session.createQuery(
+                "SELECT DISTINCT c FROM Cart c LEFT JOIN FETCH c.items", 
+                Cart.class
+            ).list();
+        }
+    }    
+
+    // ═══════════════════════════════════════════════════════════════════
+    // CRUD - DELETE (Eliminació d'entitats)
+    // ═══════════════════════════════════════════════════════════════════
+
+    // MÈTODE GENÈRIC amb Serializable: Funciona amb Long, Integer, String com a ID
+    public static <T> void delete(Class<T> clazz, Serializable id) {
         Transaction tx = null;
-        try {
+        try (Session session = factory.openSession()) {
             tx = session.beginTransaction();
-            T obj = clazz.cast(session.get(clazz, id));
-            if (obj != null) {  // Only try to remove if the object exists
+            T obj = session.get(clazz, id);
+            if (obj != null) {
+                // REMOVE: Elimina l'entitat de la BBDD
                 session.remove(obj);
                 tx.commit();
+                System.out.println("Eliminat objecte " + clazz.getSimpleName() + " amb id " + id);
             }
-        } catch (HibernateException e) {
-            if (tx != null) tx.rollback();
+        } catch (Exception e) {
+            if (tx != null && tx.isActive()) tx.rollback();
             e.printStackTrace();
-        } finally {
-            session.close();
         }
     }
 
-    public static <T> Collection<?> listCollection(Class<? extends T> clazz) {
-        return listCollection(clazz, "");
-    }
+    // ═══════════════════════════════════════════════════════════════════
+    // UTILITATS
+    // ═══════════════════════════════════════════════════════════════════
 
-    public static <T> Collection<?> listCollection(Class<? extends T> clazz, String where){
-        Session session = factory.openSession();
-        Transaction tx = null;
-        Collection<?> result = null;
-        try {
-            tx = session.beginTransaction();
-            if (where.length() == 0) {
-                result = session.createQuery("FROM " + clazz.getName(), clazz).list(); // Added class parameter
-            } else {
-                result = session.createQuery("FROM " + clazz.getName() + " WHERE " + where, clazz).list();
-            }
-            tx.commit();
-        } catch (HibernateException e) {
-            if (tx!=null) tx.rollback();
-            e.printStackTrace(); 
-        } finally {
-            session.close(); 
+    public static <T> String collectionToString(Collection<T> collection) {
+        StringBuilder sb = new StringBuilder();
+        for (T obj : collection) {
+            sb.append(obj.toString()).append("\n");
         }
-        return result;
-    }
-
-    public static <T> String collectionToString(Class<? extends T> clazz, Collection<?> collection){
-        String txt = "";
-        for(Object obj: collection) {
-            T cObj = clazz.cast(obj);
-            txt += "\n" + cObj.toString();
-        }
-        if (txt.length() > 0 && txt.substring(0, 1).compareTo("\n") == 0) {
-            txt = txt.substring(1);
-        }
-        return txt;
-    }
-
-    public static void queryUpdate(String queryString) {
-        Session session = factory.openSession();
-        Transaction tx = null;
-        try {
-            tx = session.beginTransaction();
-            NativeQuery<?> query = session.createNativeQuery(queryString, Void.class); // Updated to NativeQuery
-            query.executeUpdate();
-            tx.commit();
-        } catch (HibernateException e) {
-            if (tx!=null) tx.rollback();
-            e.printStackTrace(); 
-        } finally {
-            session.close(); 
-        }
-    }
-
-    public static List<Object[]> queryTable(String queryString) {
-        Session session = factory.openSession();
-        Transaction tx = null;
-        List<Object[]> result = null;
-        try {
-            tx = session.beginTransaction();
-            NativeQuery<Object[]> query = session.createNativeQuery(queryString, Object[].class); // Updated to NativeQuery
-            result = query.getResultList(); // Changed from list() to getResultList()
-            tx.commit();
-        } catch (HibernateException e) {
-            if (tx!=null) tx.rollback();
-            e.printStackTrace(); 
-        } finally {
-            session.close(); 
-        }
-        return result;
-    }
-
-    public static String tableToString(List<Object[]> rows) {
-        String txt = "";
-        for (Object[] row : rows) {
-            for (Object cell : row) {
-                txt += cell.toString() + ", ";
-            }
-            if (txt.length() >= 2 && txt.substring(txt.length() - 2).compareTo(", ") == 0) {
-                txt = txt.substring(0, txt.length() - 2);
-            }
-            txt += "\n";
-        }
-        if (txt.length() >= 2) {
-            txt = txt.substring(0, txt.length() - 1);
-        }
-        return txt;
+        return sb.toString();
     }
 }
