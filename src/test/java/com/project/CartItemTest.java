@@ -199,41 +199,41 @@ public class CartItemTest {
     
     @Test
     @Order(9)
-    public void testOrphanItemStillExists() {
-        // TEST IMPORTANT: Sense orphanRemoval, l'item tret del cart NO s'elimina de la BBDD
+    public void testOrphanItemIsDeleted() {
+        // TEST IMPORTANT: Amb orphanRemoval = true, l'item tret del cart S'ELIMINA de la BBDD
         
         // ACT: Busquem l'item que hem tret del cart al test anterior
         Item orphanItem = findItemById(testItem1.getItemId());
         
-        // ASSERT: L'item encara existeix a la BBDD (només s'ha desvinculat del cart)
-        assertNotNull(orphanItem, "L'item orfe hauria de continuar existint a la BBDD");
-        
-        // Opcional: Verificar que no té cart assignat
-        // Nota: Això requereix que findItemById retorni l'item amb el cart carregat
+        // ASSERT: L'item ja no existeix (no ha quedat "orfe" amb la clau forana a NULL)
+        assertNull(orphanItem, "L'item tret del carret s'hauria d'haver eliminat de la BBDD");
     }
     
     @Test
     @Order(10)
-    public void testMoveItemBetweenCarts() {
-        // TEST IMPORTANT: Moure un item d'un cart a un altre
+    public void testCascadePersistAndRemove() {
+        // TEST IMPORTANT: CascadeType.ALL propaga el persist i el remove del cart als seus items
         
         // ARRANGE: Creem un segon cart
         Cart cart2 = Manager.addCart("Carret 2");
         
-        // ACT: Afegim l'item orfe (testItem1) al nou cart
+        // ACT 1: Hi afegim un item NOU (sense id). No fem cap persist de l'item
         Set<Item> itemsCart2 = new HashSet<>();
-        itemsCart2.add(testItem1);
+        itemsCart2.add(new Item("Item del carret 2"));
         Manager.updateCart(cart2.getCartId(), cart2.getType(), itemsCart2);
         
-        // ASSERT
+        // ASSERT 1: L'item s'ha desat sol, pel cascade, i ja té id
         Cart updatedCart2 = Manager.getCartWithItems(cart2.getCartId());
-        assertTrue(updatedCart2.getItems().contains(testItem1), "L'item s'hauria d'haver mogut al cart 2");
         assertEquals(1, updatedCart2.getItems().size(), "El cart 2 hauria de tenir 1 item");
+        Item cascadeItem = updatedCart2.getItems().iterator().next();
+        assertNotNull(cascadeItem.getItemId(), "L'item nou hauria de tenir id");
+        assertNotNull(findItemById(cascadeItem.getItemId()), "L'item nou hauria d'existir a la BBDD");
         
-        // Cleanup: Eliminem el cart2 creat per aquest test
-        Set<Item> emptySet = new HashSet<>();
-        Manager.updateCart(cart2.getCartId(), cart2.getType(), emptySet);
+        // ACT 2: Eliminem el cart
         Manager.delete(Cart.class, cart2.getCartId());
+        
+        // ASSERT 2: El seu item també s'ha eliminat, pel cascade
+        assertNull(findItemById(cascadeItem.getItemId()), "En eliminar el cart s'hauria d'eliminar el seu item");
     }
     
     @Test
@@ -251,6 +251,9 @@ public class CartItemTest {
         // ASSERT
         Cart updatedCart = Manager.getCartWithItems(testCart.getCartId());
         assertTrue(updatedCart.getItems().isEmpty(), "El carret hauria d'estar buit");
+        
+        // Amb orphanRemoval, l'item que hi quedava també s'ha eliminat de la BBDD
+        assertNull(findItemById(testItem2.getItemId()), "L'item 2 s'hauria d'haver eliminat en buidar el carret");
     }
     
     // ═══════════════════════════════════════════════════════════════════
@@ -259,14 +262,15 @@ public class CartItemTest {
     
     @Test
     @Order(12)
-    public void testDeleteItems() {
-        // ACT: Eliminem els items
-        Manager.delete(Item.class, testItem1.getItemId());
-        Manager.delete(Item.class, testItem2.getItemId());
+    public void testDeleteItem() {
+        // ARRANGE: Creem un item que no pertany a cap cart
+        Item looseItem = Manager.addItem("Item sense carret");
+        
+        // ACT: L'eliminem directament
+        Manager.delete(Item.class, looseItem.getItemId());
         
         // ASSERT: assertNull comprova que l'objecte ÉS null
-        assertNull(findItemById(testItem1.getItemId()), "L'item 1 hauria d'estar eliminat");
-        assertNull(findItemById(testItem2.getItemId()), "L'item 2 hauria d'estar eliminat");
+        assertNull(findItemById(looseItem.getItemId()), "L'item hauria d'estar eliminat");
     }
     
     @Test
